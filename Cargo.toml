@@ -1,0 +1,11 @@
+[package]
+name = "lens_driver"
+version = "0.1.0"
+edition = "2021"
+authors = ["Elhanan Buchsbaum <elhananby@gmail.com>"]
+description = "A Rust crate for interfacing with an optotune lens driver over a serial connection."
+license = "MIT"
+
+[dependencies]
+serialport = "4.4.0"
+crc = "3.2.1"
