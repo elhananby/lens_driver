@@ -3,7 +3,7 @@
 use serialport::SerialPort;
 use std::error::Error;
 use std::time::Duration;
-use std::fmt;
+use std::{fmt, str};
 
 #[derive(Debug)]
 pub enum LensError {
@@ -38,6 +38,7 @@ impl From<std::io::Error> for LensError {
 
 pub struct LensDriver {
     port: Option<String>,
+    firmware_type: Option<u8>,
     crc_table: Vec<u16>,
     ser: Option<Box<dyn SerialPort>>,
     current: Option<f64>,
@@ -48,6 +49,7 @@ impl LensDriver {
     pub fn new(port: Option<String>) -> Self {
         LensDriver {
             port,
+            firmware_type: None,
             crc_table: Self::init_crc_table(),
             ser: None,
             current: None,
@@ -75,7 +77,13 @@ impl LensDriver {
     }
 
     pub fn connect(&mut self) -> Result<(), LensError> {
-        let port = self.port.as_ref().ok_or(LensError::SerialError(serialport::Error::new(serialport::ErrorKind::NoDevice, "Port not set")))?;
+        let port = self
+            .port
+            .as_ref()
+            .ok_or(LensError::SerialError(serialport::Error::new(
+                serialport::ErrorKind::NoDevice,
+                "Port not set",
+            )))?;
         let mut port = serialport::new(port, 115_200)
             .timeout(Duration::from_millis(200))
             .open()?;
@@ -89,6 +97,7 @@ impl LensDriver {
         }
 
         self.ser = Some(port);
+        self.firmware_type = self.firmwaretype().ok();
         Ok(())
     }
 
@@ -269,8 +278,8 @@ impl LensDriver {
                     true,
                 )?;
                 let status = resp[2];
-                let focal_max = (u16::from_be_bytes([resp[3], resp[4]]) as f64 / 200.0) - 5.0;
-                let focal_min = (u16::from_be_bytes([resp[5], resp[6]]) as f64 / 200.0) - 5.0;
+                let focal_max = u16::from_be_bytes([resp[3], resp[4]]) as f64 / 200.0;
+                let focal_min = u16::from_be_bytes([resp[5], resp[6]]) as f64 / 200.0;
                 println!(
                     "Status: {}, Focal range: {} to {}",
                     status, focal_min, focal_max
@@ -383,12 +392,15 @@ impl LensDriver {
         }
     }
 
-    
     pub fn focalpower(&mut self, value: Option<f64>) -> Result<f64, Box<dyn Error>> {
         match value {
             Some(val) => {
-                let data = (((val + 5.0) * 200.0) as i16).to_be_bytes();
-                self.send_cmd(&[b'P', b'w', b'D', b'A', data[0], data[1], 0, 0], true, false)?;
+                let data = ((val * 200.0) as i16).to_be_bytes();
+                self.send_cmd(
+                    &[b'P', b'w', b'D', b'A', data[0], data[1], 0, 0],
+                    true,
+                    false,
+                )?;
                 Ok(val)
             }
             None => {
@@ -406,18 +418,31 @@ impl LensDriver {
                 }
                 let lower_data = ((lower * 16.0) as i16).to_be_bytes();
                 let upper_data = ((upper * 16.0) as i16).to_be_bytes();
-                self.send_cmd(&[b'P', b'w', b'T', b'A', upper_data[0], upper_data[1], lower_data[0], lower_data[1]], true, true)?;
+                self.send_cmd(
+                    &[
+                        b'P',
+                        b'w',
+                        b'T',
+                        b'A',
+                        upper_data[0],
+                        upper_data[1],
+                        lower_data[0],
+                        lower_data[1],
+                    ],
+                    true,
+                    true,
+                )?;
             }
             None => {}
         }
         let resp = self.send_cmd(b"PrTA\x00\x00\x00\x00", true, true)?;
-        
+
         if resp.len() < 5 {
             return Err("Unexpected response length when reading temperature limits".into());
         }
 
         let upper = i16::from_be_bytes([resp[3], resp[4]]) as f64 / 200.0 - 5.0;
-        
+
         let lower = if resp.len() >= 7 {
             i16::from_be_bytes([resp[5], resp[6]]) as f64 / 200.0 - 5.0
         } else {
@@ -436,7 +461,18 @@ impl LensDriver {
                     return Err("Maximum current cannot exceed 292.84 mA".into());
                 }
                 let data = (val * 100.0) as u16;
-                self.send_cmd(&[b'C', b'w', b'M', b'A', data.to_be_bytes()[0], data.to_be_bytes()[1]], true, true)?;
+                self.send_cmd(
+                    &[
+                        b'C',
+                        b'w',
+                        b'M',
+                        b'A',
+                        data.to_be_bytes()[0],
+                        data.to_be_bytes()[1],
+                    ],
+                    true,
+                    true,
+                )?;
                 self.current_max = val;
             }
             None => {
