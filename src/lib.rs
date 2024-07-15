@@ -67,7 +67,7 @@ impl Lens {
         lens.lens_serial = lens.get_lens_serial_number()?;
 
         if lens.debug {
-            println!("=== Lens initialization complete ==================================================================");
+            println!("=== Lens initialization complete ===");
         }
 
         Ok(lens)
